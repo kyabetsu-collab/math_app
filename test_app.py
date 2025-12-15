@@ -7,15 +7,15 @@ import sympy as sp
 import re
 from datetime import datetime
 
-# ======================
+# ==============================
 # 設定
-# ======================
+# ==============================
 PROBLEM_FILE = "problems.json"
 TEACHER_PASSWORD = "20020711"
 
-# ======================
-# 共通処理
-# ======================
+# ==============================
+# 共通関数
+# ==============================
 def now():
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -30,9 +30,9 @@ def save_problems(problems):
     with open(PROBLEM_FILE, "w", encoding="utf-8") as f:
         json.dump(problems, f, ensure_ascii=False, indent=2)
 
-# ======================
-# 採点ロジック
-# ======================
+# ==============================
+# 採点処理
+# ==============================
 def normalize(s):
     if not isinstance(s, str):
         return s
@@ -50,6 +50,7 @@ def safe_eval(expr):
 def is_equal(student, correct):
     student = normalize(student)
     correct = normalize(correct)
+
     try:
         return sp.simplify(sp.sympify(student) - sp.sympify(correct)) == 0
     except:
@@ -64,11 +65,12 @@ def check_answer(student, correct):
         return any(is_equal(student, c) for c in correct)
     return is_equal(student, correct)
 
-# ======================
+# ==============================
 # 生徒画面
-# ======================
+# ==============================
 def student_view():
     st.header("✏ 生徒用テスト")
+    st.caption(f"日時：{now()}")
 
     problems = load_problems()
     n = len(problems)
@@ -83,6 +85,7 @@ def student_view():
         random.shuffle(st.session_state.order)
         st.session_state.q = 0
         st.session_state.results = {}
+        st.session_state.finished = False
 
     idx = st.session_state.order[st.session_state.q]
     prob = problems[idx]
@@ -90,45 +93,47 @@ def student_view():
     st.subheader(f"問題 {st.session_state.q + 1} / {n}")
     st.write(prob["question"])
 
-    ans_key = f"answer_{idx}"
-    if ans_key not in st.session_state:
-        st.session_state[ans_key] = ""
-
-    st.text_input("答えを入力してください", key=ans_key)
+    ans_key = f"ans_{idx}"
+    answer = st.text_input("答えを入力", key=ans_key)
 
     col1, col2 = st.columns(2)
 
     with col1:
         if st.button("回答して次へ"):
-            ans = st.session_state[ans_key]
             st.session_state.results[idx] = {
                 "question": prob["question"],
-                "student_answer": ans,
+                "student_answer": answer,
                 "correct_answer": prob["answer"],
-                "is_correct": check_answer(ans, prob["answer"])
+                "is_correct": check_answer(answer, prob["answer"])
             }
+
             if st.session_state.q < n - 1:
                 st.session_state.q += 1
+            else:
+                st.session_state.finished = True
+
             st.rerun()
 
     with col2:
-        if st.session_state.q > 0:
-            if st.button("前へ戻る"):
-                st.session_state.q -= 1
-                st.rerun()
+        if st.button("前へ戻る") and st.session_state.q > 0:
+            st.session_state.q -= 1
+            st.rerun()
 
-    if len(st.session_state.results) == n:
+    # 結果表示
+    if st.session_state.finished:
         st.divider()
         if st.button("結果を見る"):
             df = pd.DataFrame(st.session_state.results.values())
+            st.subheader("📊 解答結果")
             st.dataframe(df)
             st.success(f"正答率：{df['is_correct'].mean() * 100:.1f}%")
 
-# ======================
+# ==============================
 # 教師画面
-# ======================
+# ==============================
 def teacher_view():
-    st.header("🧑‍🏫 教師用管理画面")
+    st.header("🧑‍🏫 教師用管理")
+    st.caption(f"日時：{now()}")
 
     problems = load_problems()
 
@@ -139,7 +144,6 @@ def teacher_view():
             a = st.text_input("答え（複数は [\"a\",\"b\"]）", str(p["answer"]), key=f"a{i}")
 
             col1, col2 = st.columns(2)
-
             with col1:
                 if st.button("保存", key=f"s{i}"):
                     try:
@@ -171,11 +175,10 @@ def teacher_view():
         st.success("追加しました")
         st.rerun()
 
-# ======================
+# ==============================
 # メイン
-# ======================
+# ==============================
 st.set_page_config(page_title="数学学習アプリ")
-st.caption(f"起動時刻：{now()}")
 
 if "mode" not in st.session_state:
     st.session_state.mode = None
