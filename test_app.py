@@ -223,7 +223,7 @@ def main_teacher():
 # アプリ本体（簡易ログイン）
 # ================================
 def main():
-    st.title("数学学習アプリ")
+    st.title("学習アプリ")
     mode = st.radio("モードを選択", ["生徒", "教師"])
     if mode=="生徒":
         main_test()
