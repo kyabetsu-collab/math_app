@@ -1,3 +1,4 @@
+
 import streamlit as st
 import json
 import random
@@ -5,12 +6,14 @@ import pandas as pd
 import math
 import sympy as sp
 import re
+import os
 from datetime import datetime
 
 # ==============================
 # 設定
 # ==============================
 PROBLEM_FILE = "problems.json"
+RESULT_FILE = "results.csv"
 TEACHER_PASSWORD = "20020711"
 
 # ==============================
@@ -79,7 +82,6 @@ def student_view():
         st.info("問題がまだ登録されていません。")
         return
 
-    # 初期化
     if "order" not in st.session_state:
         st.session_state.order = list(range(n))
         random.shuffle(st.session_state.order)
@@ -103,8 +105,9 @@ def student_view():
             st.session_state.results[idx] = {
                 "question": prob["question"],
                 "student_answer": answer,
-                "correct_answer": prob["answer"],
-                "is_correct": check_answer(answer, prob["answer"])
+                "correct_answer": str(prob["answer"]),
+                "is_correct": check_answer(answer, prob["answer"]),
+                "timestamp": now()
             }
 
             if st.session_state.q < n - 1:
@@ -119,11 +122,19 @@ def student_view():
             st.session_state.q -= 1
             st.rerun()
 
-    # 結果表示
     if st.session_state.finished:
         st.divider()
         if st.button("結果を見る"):
             df = pd.DataFrame(st.session_state.results.values())
+
+            df.to_csv(
+                RESULT_FILE,
+                mode="a",
+                header=not os.path.exists(RESULT_FILE),
+                index=False,
+                encoding="utf-8"
+            )
+
             st.subheader("📊 解答結果")
             st.dataframe(df)
             st.success(f"正答率：{df['is_correct'].mean() * 100:.1f}%")
@@ -175,6 +186,33 @@ def teacher_view():
         st.success("追加しました")
         st.rerun()
 
+    # ===== 分析 =====
+    st.divider()
+    st.subheader("📊 正答率分析")
+
+    if os.path.exists(RESULT_FILE):
+        df = pd.read_csv(RESULT_FILE)
+
+        overall = df["is_correct"].mean() * 100
+        st.metric("全体正答率", f"{overall:.1f}%")
+
+        rate_df = (
+            df.groupby("question")["is_correct"]
+            .mean()
+            .reset_index()
+        )
+        rate_df["正答率(%)"] = rate_df["is_correct"] * 100
+
+        st.subheader("問題ごとの正答率（表）")
+        st.dataframe(rate_df[["question", "正答率(%)"]])
+
+        st.subheader("問題ごとの正答率（グラフ）")
+        st.bar_chart(
+            rate_df.set_index("question")["正答率(%)"]
+        )
+    else:
+        st.info("まだ生徒の解答データがありません。")
+
 # ==============================
 # メイン
 # ==============================
@@ -184,7 +222,7 @@ if "mode" not in st.session_state:
     st.session_state.mode = None
 
 if st.session_state.mode is None:
-    st.title("📘 数学学習アプリ")
+    st.title("📘 学習アプリ")
     mode = st.radio("利用者選択", ["生徒", "教師"])
 
     if mode == "生徒":
