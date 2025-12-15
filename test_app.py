@@ -1,6 +1,6 @@
 # ==============================
-# 数学学習アプリ【完全・安定版】
-# Streamlit 1.30+ 対応
+# 数学学習アプリ【完全・最終版】
+# Streamlit 1.30+
 # ==============================
 
 import streamlit as st
@@ -11,6 +11,7 @@ import math
 import sympy as sp
 import re
 import os
+import unicodedata
 from datetime import datetime
 
 # ==============================
@@ -69,36 +70,63 @@ def reset_results():
         os.remove(RESULT_FILE)
 
 # ==============================
-# 採点処理
+# 採点処理（表記ゆれ完全吸収）
 # ==============================
 
-def normalize(s):
+def normalize_text(s):
     if not isinstance(s, str):
         return s
-    s = s.replace("　", " ").strip()
-    s = re.sub(r"\s*,\s*", ",", s)
+
+    s = unicodedata.normalize("NFKC", s)
+    s = s.strip().replace(" ", "")
+    s = s.replace("，", ",").replace("√", "sqrt")
+    s = s.replace("十分条件", "十分").replace("必要条件", "必要")
+    s = s.strip("{}()")
     return s
 
 
-def safe_eval(expr):
+def normalize_solution(s):
+    s = normalize_text(s)
+    s = s.replace("x=", "")
+    parts = s.split(",")
     try:
-        expr = expr.replace("√", "sqrt")
-        return float(eval(expr, {"sqrt": math.sqrt}))
+        parts = [str(sp.simplify(p)) for p in parts]
+    except Exception:
+        pass
+    return sorted(parts)
+
+
+def safe_sympy(expr):
+    try:
+        return sp.simplify(sp.sympify(expr))
     except Exception:
         return None
 
 
 def is_equal(student, correct):
-    student = normalize(student)
-    correct = normalize(correct)
+    student = normalize_text(student)
+    correct = normalize_text(correct)
+
+    # 解集合（順序無視）
+    if "," in student or "," in correct:
+        try:
+            return normalize_solution(student) == normalize_solution(correct)
+        except Exception:
+            pass
+
+    # 数式比較
+    s_expr = safe_sympy(student)
+    c_expr = safe_sympy(correct)
+    if s_expr is not None and c_expr is not None:
+        return sp.simplify(s_expr - c_expr) == 0
+
+    # 数値比較
     try:
-        return sp.simplify(sp.sympify(student) - sp.sympify(correct)) == 0
+        return abs(float(student) - float(correct)) < 1e-6
     except Exception:
-        sv = safe_eval(student)
-        cv = safe_eval(correct)
-        if sv is not None and cv is not None:
-            return abs(sv - cv) < 1e-6
-        return str(student).lower() == str(correct).lower()
+        pass
+
+    return student == correct
 
 
 def check_answer(student, correct):
@@ -119,8 +147,8 @@ def student_view():
         return
 
     problems = load_problems()
-    if len(problems) == 0:
-        st.warning("問題が登録されていません（教師が問題を追加してください）")
+    if not problems:
+        st.warning("問題が登録されていません")
         return
 
     if "order" not in st.session_state:
@@ -137,15 +165,9 @@ def student_view():
     st.write(prob["question"])
 
     default = st.session_state.results.get(idx, {}).get("student_answer", "")
+    key = f"answer_{st.session_state.q}"
 
-    # 問題ごと＋表示順で一意な key（超重要）
-    answer_key = f"answer_{idx}_{st.session_state.q}"
-
-    answer = st.text_input(
-        "答え",
-        value=default,
-        key=answer_key
-    )
+    answer = st.text_input("答え", value=default, key=key)
 
     col1, col2 = st.columns(2)
 
@@ -159,12 +181,10 @@ def student_view():
                 "is_correct": check_answer(answer, prob["answer"]),
                 "timestamp": now(),
             }
-
             if st.session_state.q < len(problems) - 1:
                 st.session_state.q += 1
             else:
                 st.session_state.finished = True
-
             st.rerun()
 
     with col2:
@@ -193,7 +213,6 @@ def student_view():
 def teacher_view():
     st.header("🧑‍🏫 教師用管理")
 
-    # ---------- 問題編集 ----------
     st.subheader("📘 問題編集")
     problems = load_problems()
 
@@ -230,58 +249,48 @@ def teacher_view():
         st.success("追加しました")
         st.rerun()
 
-    # ---------- 成績分析 ----------
     st.divider()
     st.subheader("📊 成績分析")
 
     df = load_results_safe()
     if df is None:
-        st.error("成績データを読み込めません。リセットしてください。")
-        if st.button("🔄 成績データをリセット"):
+        st.error("成績データを読み込めません")
+        if st.button("🔄 リセット"):
             reset_results()
-            st.success("リセットしました")
             st.rerun()
         return
 
     st.metric("クラス正答率", f"{df['is_correct'].mean()*100:.1f}%")
+    st.bar_chart(df.groupby("question")["is_correct"].mean() * 100)
 
-    st.subheader("問題別正答率")
-    qrate = df.groupby("question")["is_correct"].mean() * 100
-    st.bar_chart(qrate)
-
-    st.subheader("👤 個人成績")
     sid = st.selectbox("生徒ID", sorted(df["student_id"].unique()))
     sdf = df[df["student_id"] == sid].copy()
 
     st.metric("個人正答率", f"{sdf['is_correct'].mean()*100:.1f}%")
 
     sdf["timestamp"] = pd.to_datetime(sdf["timestamp"])
-    sdf = sdf.sort_values("timestamp")
     sdf["累積正答率"] = sdf["is_correct"].expanding().mean() * 100
-
     st.line_chart(sdf.set_index("timestamp")["累積正答率"])
 
-    st.divider()
-    if st.button("⚠ 全成績データを完全リセット"):
+    if st.button("⚠ 全成績リセット"):
         reset_results()
-        st.success("全データを削除しました")
         st.rerun()
 
 # ==============================
 # メイン
 # ==============================
 
-st.set_page_config(page_title="数学学習アプリ")
+st.set_page_config(page_title="学習アプリ")
 
 if "mode" not in st.session_state:
     st.session_state.mode = None
 
 if st.session_state.mode is None:
-    st.title("📘 学習アプリ")
+    st.title("📘 数学学習アプリ")
     mode = st.radio("利用者選択", ["生徒", "教師"])
 
     if mode == "生徒":
-        if st.button("生徒として開始"):
+        if st.button("開始"):
             st.session_state.mode = "student"
             st.rerun()
     else:
@@ -292,15 +301,14 @@ if st.session_state.mode is None:
 
 elif st.session_state.mode == "student":
     if st.button("ログアウト"):
-        for k in list(st.session_state.keys()):
-            del st.session_state[k]
+        st.session_state.clear()
         st.rerun()
     student_view()
 
 else:
     if st.button("ログアウト"):
-        for k in list(st.session_state.keys()):
-            del st.session_state[k]
+        st.session_state.clear()
         st.rerun()
     teacher_view()
+
 
