@@ -1,6 +1,6 @@
 # ==============================
-# 数学学習アプリ【完全版】
-# 生徒：個人ID入力・解答保存・前後移動・結果確認
+# 数学学習アプリ【完全版・安定版】
+# 生徒：ID入力・解答保存・前後移動・結果確認
 # 教師：問題編集・個人成績・成績推移・クラス分析・リセット
 # ==============================
 
@@ -30,6 +30,8 @@ def now():
 
 
 def load_problems():
+    if not os.path.exists(PROBLEM_FILE):
+        return []
     try:
         with open(PROBLEM_FILE, "r", encoding="utf-8") as f:
             return json.load(f)
@@ -85,13 +87,12 @@ def check_answer(student, correct):
 
 def student_view():
     st.header("✏ 生徒用テスト")
+    st.caption(f"日時：{now()}")
 
     student_id = st.text_input("生徒ID（出席番号など）")
     if student_id == "":
         st.info("生徒IDを入力してください")
         return
-
-    st.caption(f"日時：{now()}")
 
     problems = load_problems()
     n = len(problems)
@@ -114,7 +115,6 @@ def student_view():
     st.write(prob["question"])
 
     default_answer = st.session_state.results.get(idx, {}).get("student_answer", "")
-
     answer = st.text_input("答えを入力", value=default_answer, key=f"ans_{idx}")
 
     col1, col2 = st.columns(2)
@@ -163,6 +163,7 @@ def teacher_view():
     st.header("🧑‍🏫 教師用管理")
     st.caption(f"日時：{now()}")
 
+    # ---------- 問題編集 ----------
     st.subheader("📘 問題編集")
     problems = load_problems()
 
@@ -201,6 +202,7 @@ def teacher_view():
         st.success("追加しました")
         st.rerun()
 
+    # ---------- 成績分析 ----------
     st.divider()
     st.subheader("📊 成績分析")
 
@@ -208,18 +210,39 @@ def teacher_view():
         st.info("まだ解答データがありません")
         return
 
-    df = pd.read_csv(RESULT_FILE)
+    try:
+        df = pd.read_csv(RESULT_FILE)
+    except:
+        st.error("成績データを読み込めません。リセットしてください")
+        return
+
+    if df.empty:
+        st.info("成績データがまだありません")
+        return
+
+    required_cols = {"student_id", "question", "is_correct", "timestamp"}
+    if not required_cols.issubset(df.columns):
+        st.error("成績データ形式が不正です。リセットしてください")
+        return
+
+    df = df.dropna(subset=["is_correct"])
+    if df.empty:
+        st.info("有効な解答データがありません")
+        return
 
     st.metric("クラス全体正答率", f"{df['is_correct'].mean()*100:.1f}%")
 
     rate_df = df.groupby("question")["is_correct"].mean().reset_index()
     rate_df["正答率(%)"] = rate_df["is_correct"] * 100
+
     st.subheader("問題別正答率")
     st.dataframe(rate_df[["question", "正答率(%)"]])
     st.bar_chart(rate_df.set_index("question")["正答率(%)"])
 
     st.subheader("👤 個人成績")
-    sid = st.selectbox("生徒ID選択", sorted(df["student_id"].unique()))
+    sid_list = sorted(df["student_id"].unique())
+    sid = st.selectbox("生徒ID選択", sid_list)
+
     sdf = df[df["student_id"] == sid]
     st.metric("個人正答率", f"{sdf['is_correct'].mean()*100:.1f}%")
 
@@ -231,6 +254,7 @@ def teacher_view():
     st.subheader("成績推移")
     st.line_chart(trend.set_index("timestamp")["累積正答率"])
 
+    # ---------- リセット ----------
     st.divider()
     st.subheader("⚠ データリセット")
     if st.button("全成績データを削除"):
@@ -243,7 +267,7 @@ def teacher_view():
 # メイン
 # ==============================
 
-st.set_page_config(page_title="数学学習アプリ")
+st.set_page_config(page_title="学習アプリ")
 
 if "mode" not in st.session_state:
     st.session_state.mode = None
