@@ -70,7 +70,7 @@ def check_answer(student, correct):
 # 生徒画面
 # ================================
 def main_test():
-    st.title("数学自動採点テスト")
+    st.title("採点")
     load_problems()
     n = len(st.session_state.all_problems)
     if n == 0:
