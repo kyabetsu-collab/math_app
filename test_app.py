@@ -1,3 +1,8 @@
+# ==============================
+# 数学学習アプリ【完全版】
+# 生徒：個人ID入力・解答保存・前後移動・結果確認
+# 教師：問題編集・個人成績・成績推移・クラス分析・リセット
+# ==============================
 
 import streamlit as st
 import json
@@ -19,8 +24,10 @@ TEACHER_PASSWORD = "20020711"
 # ==============================
 # 共通関数
 # ==============================
+
 def now():
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
 
 def load_problems():
     try:
@@ -29,6 +36,7 @@ def load_problems():
     except:
         return []
 
+
 def save_problems(problems):
     with open(PROBLEM_FILE, "w", encoding="utf-8") as f:
         json.dump(problems, f, ensure_ascii=False, indent=2)
@@ -36,12 +44,14 @@ def save_problems(problems):
 # ==============================
 # 採点処理
 # ==============================
+
 def normalize(s):
     if not isinstance(s, str):
         return s
     s = s.replace("　", " ").strip()
     s = re.sub(r"\s*,\s*", ",", s)
     return s
+
 
 def safe_eval(expr):
     try:
@@ -50,10 +60,10 @@ def safe_eval(expr):
     except:
         return None
 
+
 def is_equal(student, correct):
     student = normalize(student)
     correct = normalize(correct)
-
     try:
         return sp.simplify(sp.sympify(student) - sp.sympify(correct)) == 0
     except:
@@ -61,7 +71,8 @@ def is_equal(student, correct):
         cv = safe_eval(correct)
         if sv is not None and cv is not None:
             return abs(sv - cv) < 1e-6
-        return student.lower() == correct.lower()
+        return str(student).lower() == str(correct).lower()
+
 
 def check_answer(student, correct):
     if isinstance(correct, list):
@@ -71,18 +82,24 @@ def check_answer(student, correct):
 # ==============================
 # 生徒画面
 # ==============================
+
 def student_view():
     st.header("✏ 生徒用テスト")
+
+    student_id = st.text_input("生徒ID（出席番号など）")
+    if student_id == "":
+        st.info("生徒IDを入力してください")
+        return
+
     st.caption(f"日時：{now()}")
 
     problems = load_problems()
     n = len(problems)
 
     if n == 0:
-        st.info("問題がまだ登録されていません。")
+        st.info("問題がまだ登録されていません")
         return
 
-    # 初期化
     if "order" not in st.session_state:
         st.session_state.order = list(range(n))
         random.shuffle(st.session_state.order)
@@ -96,35 +113,26 @@ def student_view():
     st.subheader(f"問題 {st.session_state.q + 1} / {n}")
     st.write(prob["question"])
 
-    # ★ 回答復元 ★
-    default_answer = ""
-    if idx in st.session_state.results:
-        default_answer = st.session_state.results[idx]["student_answer"]
+    default_answer = st.session_state.results.get(idx, {}).get("student_answer", "")
 
-    ans_key = f"ans_{idx}"
-    answer = st.text_input(
-        "答えを入力",
-        value=default_answer,
-        key=ans_key
-    )
+    answer = st.text_input("答えを入力", value=default_answer, key=f"ans_{idx}")
 
     col1, col2 = st.columns(2)
 
     with col1:
         if st.button("回答して次へ"):
             st.session_state.results[idx] = {
+                "student_id": student_id,
                 "question": prob["question"],
                 "student_answer": answer,
                 "correct_answer": str(prob["answer"]),
                 "is_correct": check_answer(answer, prob["answer"]),
-                "timestamp": now()
+                "timestamp": now(),
             }
-
             if st.session_state.q < n - 1:
                 st.session_state.q += 1
             else:
                 st.session_state.finished = True
-
             st.rerun()
 
     with col2:
@@ -132,36 +140,32 @@ def student_view():
             st.session_state.q -= 1
             st.rerun()
 
-    # 結果表示
     if st.session_state.finished:
         st.divider()
         if st.button("結果を見る"):
             df = pd.DataFrame(st.session_state.results.values())
-
             df.to_csv(
                 RESULT_FILE,
                 mode="a",
                 header=not os.path.exists(RESULT_FILE),
                 index=False,
-                encoding="utf-8"
+                encoding="utf-8",
             )
-
             st.subheader("📊 解答結果")
             st.dataframe(df)
-
-            rate = df["is_correct"].mean() * 100
-            st.success(f"正答率：{rate:.1f}%")
+            st.success(f"正答率：{df['is_correct'].mean() * 100:.1f}%")
 
 # ==============================
 # 教師画面
 # ==============================
+
 def teacher_view():
     st.header("🧑‍🏫 教師用管理")
     st.caption(f"日時：{now()}")
 
+    st.subheader("📘 問題編集")
     problems = load_problems()
 
-    st.subheader("📘 問題編集")
     for i, p in enumerate(problems):
         with st.expander(f"{i+1}. {p['question']}"):
             q = st.text_input("問題文", p["question"], key=f"q{i}")
@@ -178,7 +182,6 @@ def teacher_view():
                     save_problems(problems)
                     st.success("保存しました")
                     st.rerun()
-
             with col2:
                 if st.button("削除", key=f"d{i}"):
                     problems.pop(i)
@@ -188,7 +191,6 @@ def teacher_view():
     st.subheader("➕ 新規問題追加")
     nq = st.text_input("新しい問題文")
     na = st.text_input("答え")
-
     if st.button("追加"):
         try:
             na_val = json.loads(na) if na.startswith("[") else na
@@ -199,29 +201,48 @@ def teacher_view():
         st.success("追加しました")
         st.rerun()
 
-    # ===== 分析 =====
     st.divider()
-    st.subheader("📊 正答率分析")
+    st.subheader("📊 成績分析")
 
-    if os.path.exists(RESULT_FILE):
-        df = pd.read_csv(RESULT_FILE)
+    if not os.path.exists(RESULT_FILE):
+        st.info("まだ解答データがありません")
+        return
 
-        st.metric("全体正答率", f"{df['is_correct'].mean()*100:.1f}%")
+    df = pd.read_csv(RESULT_FILE)
 
-        rate_df = df.groupby("question")["is_correct"].mean().reset_index()
-        rate_df["正答率(%)"] = rate_df["is_correct"] * 100
+    st.metric("クラス全体正答率", f"{df['is_correct'].mean()*100:.1f}%")
 
-        st.subheader("問題ごとの正答率（表）")
-        st.dataframe(rate_df[["question", "正答率(%)"]])
+    rate_df = df.groupby("question")["is_correct"].mean().reset_index()
+    rate_df["正答率(%)"] = rate_df["is_correct"] * 100
+    st.subheader("問題別正答率")
+    st.dataframe(rate_df[["question", "正答率(%)"]])
+    st.bar_chart(rate_df.set_index("question")["正答率(%)"])
 
-        st.subheader("問題ごとの正答率（グラフ）")
-        st.bar_chart(rate_df.set_index("question")["正答率(%)"])
-    else:
-        st.info("まだ生徒の解答データがありません。")
+    st.subheader("👤 個人成績")
+    sid = st.selectbox("生徒ID選択", sorted(df["student_id"].unique()))
+    sdf = df[df["student_id"] == sid]
+    st.metric("個人正答率", f"{sdf['is_correct'].mean()*100:.1f}%")
+
+    trend = sdf.copy()
+    trend["timestamp"] = pd.to_datetime(trend["timestamp"])
+    trend = trend.sort_values("timestamp")
+    trend["累積正答率"] = trend["is_correct"].expanding().mean() * 100
+
+    st.subheader("成績推移")
+    st.line_chart(trend.set_index("timestamp")["累積正答率"])
+
+    st.divider()
+    st.subheader("⚠ データリセット")
+    if st.button("全成績データを削除"):
+        if os.path.exists(RESULT_FILE):
+            os.remove(RESULT_FILE)
+        st.success("成績データをリセットしました")
+        st.rerun()
 
 # ==============================
 # メイン
 # ==============================
+
 st.set_page_config(page_title="数学学習アプリ")
 
 if "mode" not in st.session_state:
@@ -255,5 +276,4 @@ elif st.session_state.mode == "teacher":
         st.session_state.clear()
         st.rerun()
     teacher_view()
-
 
