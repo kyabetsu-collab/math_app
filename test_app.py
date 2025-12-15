@@ -1,3 +1,8 @@
+# ==============================
+# 数学学習アプリ【完全・安定版】
+# Streamlit 1.30+ 対応
+# ==============================
+
 import streamlit as st
 import json
 import random
@@ -38,7 +43,7 @@ def load_problems():
     try:
         with open(PROBLEM_FILE, "r", encoding="utf-8") as f:
             return json.load(f)
-    except:
+    except Exception:
         return []
 
 
@@ -55,7 +60,7 @@ def load_results_safe():
         if not all(col in df.columns for col in REQUIRED_COLUMNS):
             return None
         return df
-    except:
+    except Exception:
         return None
 
 
@@ -79,7 +84,7 @@ def safe_eval(expr):
     try:
         expr = expr.replace("√", "sqrt")
         return float(eval(expr, {"sqrt": math.sqrt}))
-    except:
+    except Exception:
         return None
 
 
@@ -88,7 +93,7 @@ def is_equal(student, correct):
     correct = normalize(correct)
     try:
         return sp.simplify(sp.sympify(student) - sp.sympify(correct)) == 0
-    except:
+    except Exception:
         sv = safe_eval(student)
         cv = safe_eval(correct)
         if sv is not None and cv is not None:
@@ -115,7 +120,7 @@ def student_view():
 
     problems = load_problems()
     if len(problems) == 0:
-        st.warning("問題が登録されていません")
+        st.warning("問題が登録されていません（教師が問題を追加してください）")
         return
 
     if "order" not in st.session_state:
@@ -133,11 +138,13 @@ def student_view():
 
     default = st.session_state.results.get(idx, {}).get("student_answer", "")
 
-    # ★ 重要：問題ごとに key を変える
+    # 問題ごと＋表示順で一意な key（超重要）
+    answer_key = f"answer_{idx}_{st.session_state.q}"
+
     answer = st.text_input(
         "答え",
         value=default,
-        key=f"answer_{idx}"
+        key=answer_key
     )
 
     col1, col2 = st.columns(2)
@@ -152,9 +159,6 @@ def student_view():
                 "is_correct": check_answer(answer, prob["answer"]),
                 "timestamp": now(),
             }
-
-            # 次の問題用に入力欄をクリア
-            st.session_state[f"answer_{idx}"] = ""
 
             if st.session_state.q < len(problems) - 1:
                 st.session_state.q += 1
@@ -201,7 +205,7 @@ def teacher_view():
             if st.button("保存", key=f"s{i}"):
                 try:
                     ans = json.loads(a) if a.startswith("[") else a
-                except:
+                except Exception:
                     ans = a
                 problems[i] = {"question": q, "answer": ans}
                 save_problems(problems)
@@ -219,7 +223,7 @@ def teacher_view():
     if st.button("追加"):
         try:
             na = json.loads(na) if na.startswith("[") else na
-        except:
+        except Exception:
             pass
         problems.append({"question": nq, "answer": na})
         save_problems(problems)
@@ -247,7 +251,7 @@ def teacher_view():
 
     st.subheader("👤 個人成績")
     sid = st.selectbox("生徒ID", sorted(df["student_id"].unique()))
-    sdf = df[df["student_id"] == sid]
+    sdf = df[df["student_id"] == sid].copy()
 
     st.metric("個人正答率", f"{sdf['is_correct'].mean()*100:.1f}%")
 
@@ -288,13 +292,15 @@ if st.session_state.mode is None:
 
 elif st.session_state.mode == "student":
     if st.button("ログアウト"):
-        st.session_state.clear()
+        for k in list(st.session_state.keys()):
+            del st.session_state[k]
         st.rerun()
     student_view()
 
 else:
     if st.button("ログアウト"):
-        st.session_state.clear()
+        for k in list(st.session_state.keys()):
+            del st.session_state[k]
         st.rerun()
     teacher_view()
 
