@@ -82,6 +82,7 @@ def student_view():
         st.info("問題がまだ登録されていません。")
         return
 
+    # 初期化
     if "order" not in st.session_state:
         st.session_state.order = list(range(n))
         random.shuffle(st.session_state.order)
@@ -95,8 +96,17 @@ def student_view():
     st.subheader(f"問題 {st.session_state.q + 1} / {n}")
     st.write(prob["question"])
 
+    # ★ 回答復元 ★
+    default_answer = ""
+    if idx in st.session_state.results:
+        default_answer = st.session_state.results[idx]["student_answer"]
+
     ans_key = f"ans_{idx}"
-    answer = st.text_input("答えを入力", key=ans_key)
+    answer = st.text_input(
+        "答えを入力",
+        value=default_answer,
+        key=ans_key
+    )
 
     col1, col2 = st.columns(2)
 
@@ -122,6 +132,7 @@ def student_view():
             st.session_state.q -= 1
             st.rerun()
 
+    # 結果表示
     if st.session_state.finished:
         st.divider()
         if st.button("結果を見る"):
@@ -137,7 +148,9 @@ def student_view():
 
             st.subheader("📊 解答結果")
             st.dataframe(df)
-            st.success(f"正答率：{df['is_correct'].mean() * 100:.1f}%")
+
+            rate = df["is_correct"].mean() * 100
+            st.success(f"正答率：{rate:.1f}%")
 
 # ==============================
 # 教師画面
@@ -193,23 +206,16 @@ def teacher_view():
     if os.path.exists(RESULT_FILE):
         df = pd.read_csv(RESULT_FILE)
 
-        overall = df["is_correct"].mean() * 100
-        st.metric("全体正答率", f"{overall:.1f}%")
+        st.metric("全体正答率", f"{df['is_correct'].mean()*100:.1f}%")
 
-        rate_df = (
-            df.groupby("question")["is_correct"]
-            .mean()
-            .reset_index()
-        )
+        rate_df = df.groupby("question")["is_correct"].mean().reset_index()
         rate_df["正答率(%)"] = rate_df["is_correct"] * 100
 
         st.subheader("問題ごとの正答率（表）")
         st.dataframe(rate_df[["question", "正答率(%)"]])
 
         st.subheader("問題ごとの正答率（グラフ）")
-        st.bar_chart(
-            rate_df.set_index("question")["正答率(%)"]
-        )
+        st.bar_chart(rate_df.set_index("question")["正答率(%)"])
     else:
         st.info("まだ生徒の解答データがありません。")
 
