@@ -1,7 +1,3 @@
-# ==============================
-# 数学学習アプリ【完全・安定版】
-# ==============================
-
 import streamlit as st
 import json
 import random
@@ -119,7 +115,7 @@ def student_view():
 
     problems = load_problems()
     if len(problems) == 0:
-        st.warning("問題が登録されていません（教師が問題を追加してください）")
+        st.warning("問題が登録されていません")
         return
 
     if "order" not in st.session_state:
@@ -136,7 +132,13 @@ def student_view():
     st.write(prob["question"])
 
     default = st.session_state.results.get(idx, {}).get("student_answer", "")
-    answer = st.text_input("答え", value=default)
+
+    # ★ 重要：問題ごとに key を変える
+    answer = st.text_input(
+        "答え",
+        value=default,
+        key=f"answer_{idx}"
+    )
 
     col1, col2 = st.columns(2)
 
@@ -150,10 +152,15 @@ def student_view():
                 "is_correct": check_answer(answer, prob["answer"]),
                 "timestamp": now(),
             }
+
+            # 次の問題用に入力欄をクリア
+            st.session_state[f"answer_{idx}"] = ""
+
             if st.session_state.q < len(problems) - 1:
                 st.session_state.q += 1
             else:
                 st.session_state.finished = True
+
             st.rerun()
 
     with col2:
@@ -234,8 +241,8 @@ def teacher_view():
 
     st.metric("クラス正答率", f"{df['is_correct'].mean()*100:.1f}%")
 
-    qrate = df.groupby("question")["is_correct"].mean() * 100
     st.subheader("問題別正答率")
+    qrate = df.groupby("question")["is_correct"].mean() * 100
     st.bar_chart(qrate)
 
     st.subheader("👤 個人成績")
