@@ -286,7 +286,7 @@ if "mode" not in st.session_state:
     st.session_state.mode = None
 
 if st.session_state.mode is None:
-    st.title("📘 数学学習アプリ")
+    st.title("📘 学習アプリ")
     mode = st.radio("利用者選択", ["生徒", "教師"])
 
     if mode == "生徒":
