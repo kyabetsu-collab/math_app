@@ -1,5 +1,5 @@
 # ==============================
-# 数学学習アプリ【完全版：再受験管理対応】
+# 数学学習アプリ【完全版：再受験管理＋問題編集対応】
 # Streamlit 1.30+
 # ==============================
 
@@ -7,9 +7,7 @@ import streamlit as st
 import json
 import random
 import pandas as pd
-import math
 import sympy as sp
-import re
 import os
 import unicodedata
 from datetime import datetime
@@ -84,7 +82,7 @@ def get_attempt(student_id):
         return 1
 
 # ==============================
-# 採点処理（表記ゆれ対応）
+# 採点処理
 # ==============================
 
 def normalize_text(s):
@@ -225,6 +223,45 @@ def student_view():
 def teacher_view():
     st.header("🧑‍🏫 教師用管理")
 
+    # ---- 問題編集 ----
+    st.subheader("📘 問題編集")
+    problems = load_problems()
+
+    for i, p in enumerate(problems):
+        with st.expander(f"{i+1}. {p['question']}"):
+            q = st.text_input("問題文", p["question"], key=f"q{i}")
+            a = st.text_input("答え", str(p["answer"]), key=f"a{i}")
+
+            if st.button("保存", key=f"s{i}"):
+                try:
+                    ans = json.loads(a) if a.startswith("[") else a
+                except Exception:
+                    ans = a
+                problems[i] = {"question": q, "answer": ans}
+                save_problems(problems)
+                st.success("保存しました")
+                st.rerun()
+
+            if st.button("削除", key=f"d{i}"):
+                problems.pop(i)
+                save_problems(problems)
+                st.rerun()
+
+    st.subheader("➕ 新規問題追加")
+    nq = st.text_input("新しい問題文")
+    na = st.text_input("答え")
+    if st.button("追加"):
+        try:
+            na = json.loads(na) if na.startswith("[") else na
+        except Exception:
+            pass
+        problems.append({"question": nq, "answer": na})
+        save_problems(problems)
+        st.success("追加しました")
+        st.rerun()
+
+    # ---- 成績分析 ----
+    st.divider()
     st.subheader("📊 成績分析")
 
     df = load_results_safe()
