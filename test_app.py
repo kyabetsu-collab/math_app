@@ -1,5 +1,5 @@
 # ==============================
-# 数学学習アプリ【完全・最終統合版】
+# 数学学習アプリ【最終・安定完成版】
 # Streamlit 1.30+
 # ==============================
 
@@ -40,8 +40,11 @@ def now():
 def load_problems():
     if not os.path.exists(PROBLEM_FILE):
         return []
-    with open(PROBLEM_FILE, "r", encoding="utf-8") as f:
-        return json.load(f)
+    try:
+        with open(PROBLEM_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return []
 
 
 def save_problems(problems):
@@ -52,10 +55,17 @@ def save_problems(problems):
 def load_results_safe():
     if not os.path.exists(RESULT_FILE):
         return None
-    df = pd.read_csv(RESULT_FILE)
-    if not all(c in df.columns for c in REQUIRED_COLUMNS):
+    try:
+        df = pd.read_csv(RESULT_FILE)
+
+        # 必須列だけ確認（余分な列は無視）
+        for col in REQUIRED_COLUMNS:
+            if col not in df.columns:
+                return None
+
+        return df
+    except Exception:
         return None
-    return df
 
 
 def reset_results():
@@ -132,7 +142,6 @@ def student_view():
         st.warning("問題が登録されていません")
         return
 
-    # 初期化
     if "order" not in st.session_state:
         st.session_state.order = list(range(len(problems)))
         random.shuffle(st.session_state.order)
@@ -146,7 +155,6 @@ def student_view():
     st.subheader(f"問題 {st.session_state.q + 1} / {len(problems)}")
     st.write(prob["question"])
 
-    # ★ 回答の復元（最重要）
     default = st.session_state.results.get(idx, {}).get("student_answer", "")
 
     answer = st.text_input(
@@ -167,7 +175,6 @@ def student_view():
                 "is_correct": check_answer(answer, prob["answer"]),
                 "timestamp": now(),
             }
-
             if st.session_state.q < len(problems) - 1:
                 st.session_state.q += 1
             else:
@@ -240,8 +247,8 @@ def teacher_view():
     st.subheader("📊 成績分析")
 
     df = load_results_safe()
-    if df is None:
-        st.warning("成績データがありません")
+    if df is None or df.empty:
+        st.warning("成績データがまだありません")
         return
 
     st.metric("クラス正答率", f"{df['is_correct'].mean()*100:.1f}%")
@@ -281,3 +288,4 @@ else:
         st.session_state.clear()
         st.rerun()
     teacher_view()
+
