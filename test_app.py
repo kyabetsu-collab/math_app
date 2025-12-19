@@ -1,5 +1,5 @@
 # ==============================
-# 数学学習アプリ【完全版：再受験管理＋問題編集対応】
+# 数学学習アプリ【完全・最終版】
 # Streamlit 1.30+
 # ==============================
 
@@ -15,6 +15,7 @@ from datetime import datetime
 # ==============================
 # 設定
 # ==============================
+
 PROBLEM_FILE = "problems.json"
 RESULT_FILE = "results.csv"
 TEACHER_PASSWORD = "20020711"
@@ -40,11 +41,8 @@ def now():
 def load_problems():
     if not os.path.exists(PROBLEM_FILE):
         return []
-    try:
-        with open(PROBLEM_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return []
+    with open(PROBLEM_FILE, "r", encoding="utf-8") as f:
+        return json.load(f)
 
 
 def save_problems(problems):
@@ -55,13 +53,10 @@ def save_problems(problems):
 def load_results_safe():
     if not os.path.exists(RESULT_FILE):
         return None
-    try:
-        df = pd.read_csv(RESULT_FILE)
-        if not all(col in df.columns for col in REQUIRED_COLUMNS):
-            return None
-        return df
-    except Exception:
+    df = pd.read_csv(RESULT_FILE)
+    if not all(c in df.columns for c in REQUIRED_COLUMNS):
         return None
+    return df
 
 
 def reset_results():
@@ -72,14 +67,10 @@ def reset_results():
 def get_attempt(student_id):
     if not os.path.exists(RESULT_FILE):
         return 1
-    try:
-        df = pd.read_csv(RESULT_FILE)
-        past = df[df["student_id"] == student_id]
-        if past.empty:
-            return 1
-        return past["attempt"].max() + 1
-    except Exception:
+    df = pd.read_csv(RESULT_FILE)
+    if student_id not in df["student_id"].values:
         return 1
+    return df[df["student_id"] == student_id]["attempt"].max() + 1
 
 # ==============================
 # 採点処理
@@ -89,16 +80,13 @@ def normalize_text(s):
     if not isinstance(s, str):
         return s
     s = unicodedata.normalize("NFKC", s)
-    s = s.strip().replace(" ", "")
-    s = s.replace("，", ",").replace("√", "sqrt")
-    s = s.replace("十分条件", "十分").replace("必要条件", "必要")
-    s = s.strip("{}()")
+    s = s.replace(" ", "").replace("√", "sqrt")
+    s = s.replace("，", ",").strip("{}()")
     return s
 
 
 def normalize_solution(s):
-    s = normalize_text(s)
-    s = s.replace("x=", "")
+    s = normalize_text(s).replace("x=", "")
     parts = s.split(",")
     try:
         parts = [str(sp.simplify(p)) for p in parts]
@@ -107,27 +95,17 @@ def normalize_solution(s):
     return sorted(parts)
 
 
-def safe_sympy(expr):
-    try:
-        return sp.simplify(sp.sympify(expr))
-    except Exception:
-        return None
-
-
 def is_equal(student, correct):
     student = normalize_text(student)
     correct = normalize_text(correct)
 
     if "," in student or "," in correct:
-        try:
-            return normalize_solution(student) == normalize_solution(correct)
-        except Exception:
-            pass
+        return normalize_solution(student) == normalize_solution(correct)
 
-    s_expr = safe_sympy(student)
-    c_expr = safe_sympy(correct)
-    if s_expr is not None and c_expr is not None:
-        return sp.simplify(s_expr - c_expr) == 0
+    try:
+        return sp.simplify(student) == sp.simplify(correct)
+    except Exception:
+        pass
 
     try:
         return abs(float(student) - float(correct)) < 1e-6
@@ -175,8 +153,7 @@ def student_view():
     st.subheader(f"問題 {st.session_state.q + 1} / {len(problems)}")
     st.write(prob["question"])
 
-    default = st.session_state.results.get(idx, {}).get("student_answer", "")
-    answer = st.text_input("答え", value=default)
+    answer = st.text_input("答え", key=f"answer_{idx}")
 
     col1, col2 = st.columns(2)
 
@@ -191,6 +168,7 @@ def student_view():
                 "is_correct": check_answer(answer, prob["answer"]),
                 "timestamp": now(),
             }
+
             if st.session_state.q < len(problems) - 1:
                 st.session_state.q += 1
             else:
@@ -223,7 +201,6 @@ def student_view():
 def teacher_view():
     st.header("🧑‍🏫 教師用管理")
 
-    # ---- 問題編集 ----
     st.subheader("📘 問題編集")
     problems = load_problems()
 
@@ -260,25 +237,19 @@ def teacher_view():
         st.success("追加しました")
         st.rerun()
 
-    # ---- 成績分析 ----
     st.divider()
     st.subheader("📊 成績分析")
 
     df = load_results_safe()
     if df is None:
-        st.error("成績データを読み込めません")
+        st.warning("成績データがありません")
         return
 
     st.metric("クラス正答率", f"{df['is_correct'].mean()*100:.1f}%")
     st.bar_chart(df.groupby("question")["is_correct"].mean() * 100)
 
     sid = st.selectbox("生徒ID", sorted(df["student_id"].unique()))
-    attempt = st.selectbox(
-        "受験回数",
-        sorted(df[df["student_id"] == sid]["attempt"].unique())
-    )
-
-    sdf = df[(df["student_id"] == sid) & (df["attempt"] == attempt)]
+    sdf = df[df["student_id"] == sid].copy()
 
     st.metric("個人正答率", f"{sdf['is_correct'].mean()*100:.1f}%")
 
@@ -324,5 +295,6 @@ else:
         st.session_state.clear()
         st.rerun()
     teacher_view()
+
 
 
