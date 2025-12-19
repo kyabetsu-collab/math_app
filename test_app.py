@@ -1,5 +1,5 @@
 # ==============================
-# 数学学習アプリ【完全・最終版】
+# 数学学習アプリ【完全・最終安定版】
 # Streamlit 1.30+
 # ==============================
 
@@ -7,9 +7,7 @@ import streamlit as st
 import json
 import random
 import pandas as pd
-import math
 import sympy as sp
-import re
 import os
 import unicodedata
 from datetime import datetime
@@ -17,6 +15,7 @@ from datetime import datetime
 # ==============================
 # 設定
 # ==============================
+
 PROBLEM_FILE = "problems.json"
 RESULT_FILE = "results.csv"
 TEACHER_PASSWORD = "20020711"
@@ -37,7 +36,6 @@ REQUIRED_COLUMNS = [
 def now():
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-
 def load_problems():
     if not os.path.exists(PROBLEM_FILE):
         return []
@@ -47,43 +45,41 @@ def load_problems():
     except Exception:
         return []
 
-
 def save_problems(problems):
     with open(PROBLEM_FILE, "w", encoding="utf-8") as f:
         json.dump(problems, f, ensure_ascii=False, indent=2)
-
 
 def load_results_safe():
     if not os.path.exists(RESULT_FILE):
         return None
     try:
         df = pd.read_csv(RESULT_FILE)
+        if df.empty:
+            return None
         if not all(col in df.columns for col in REQUIRED_COLUMNS):
             return None
+        df["is_correct"] = df["is_correct"].astype(int)
         return df
     except Exception:
         return None
-
 
 def reset_results():
     if os.path.exists(RESULT_FILE):
         os.remove(RESULT_FILE)
 
 # ==============================
-# 採点処理（表記ゆれ完全吸収）
+# 採点処理（完全対応）
 # ==============================
 
 def normalize_text(s):
     if not isinstance(s, str):
         return s
-
     s = unicodedata.normalize("NFKC", s)
     s = s.strip().replace(" ", "")
-    s = s.replace("，", ",").replace("√", "sqrt")
+    s = s.replace("√", "sqrt").replace("，", ",")
     s = s.replace("十分条件", "十分").replace("必要条件", "必要")
     s = s.strip("{}()")
     return s
-
 
 def normalize_solution(s):
     s = normalize_text(s)
@@ -95,39 +91,33 @@ def normalize_solution(s):
         pass
     return sorted(parts)
 
-
 def safe_sympy(expr):
     try:
         return sp.simplify(sp.sympify(expr))
     except Exception:
         return None
 
-
 def is_equal(student, correct):
     student = normalize_text(student)
     correct = normalize_text(correct)
 
-    # 解集合（順序無視）
     if "," in student or "," in correct:
         try:
             return normalize_solution(student) == normalize_solution(correct)
         except Exception:
             pass
 
-    # 数式比較
     s_expr = safe_sympy(student)
     c_expr = safe_sympy(correct)
     if s_expr is not None and c_expr is not None:
         return sp.simplify(s_expr - c_expr) == 0
 
-    # 数値比較
     try:
         return abs(float(student) - float(correct)) < 1e-6
     except Exception:
         pass
 
     return student == correct
-
 
 def check_answer(student, correct):
     if isinstance(correct, list):
@@ -165,9 +155,7 @@ def student_view():
     st.write(prob["question"])
 
     default = st.session_state.results.get(idx, {}).get("student_answer", "")
-    key = f"answer_{st.session_state.q}"
-
-    answer = st.text_input("答え", value=default, key=key)
+    answer = st.text_input("答え", value=default)
 
     col1, col2 = st.columns(2)
 
@@ -178,7 +166,7 @@ def student_view():
                 "question": prob["question"],
                 "student_answer": answer,
                 "correct_answer": str(prob["answer"]),
-                "is_correct": check_answer(answer, prob["answer"]),
+                "is_correct": int(check_answer(answer, prob["answer"])),
                 "timestamp": now(),
             }
             if st.session_state.q < len(problems) - 1:
@@ -254,7 +242,7 @@ def teacher_view():
 
     df = load_results_safe()
     if df is None:
-        st.error("成績データを読み込めません")
+        st.warning("成績データがありません")
         if st.button("🔄 リセット"):
             reset_results()
             st.rerun()
@@ -310,5 +298,3 @@ else:
         st.session_state.clear()
         st.rerun()
     teacher_view()
-
-
