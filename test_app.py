@@ -1,5 +1,5 @@
 # ==============================
-# 数学学習アプリ【最終・安定完成版】
+# 数学学習アプリ【最終・完全安定版】
 # Streamlit 1.30+
 # ==============================
 
@@ -58,10 +58,12 @@ def load_results_safe():
     try:
         df = pd.read_csv(RESULT_FILE)
 
-        # 必須列だけ確認（余分な列は無視）
         for col in REQUIRED_COLUMNS:
             if col not in df.columns:
                 return None
+
+        # ★ 型を必ず数値に
+        df["is_correct"] = pd.to_numeric(df["is_correct"], errors="coerce")
 
         return df
     except Exception:
@@ -155,6 +157,7 @@ def student_view():
     st.subheader(f"問題 {st.session_state.q + 1} / {len(problems)}")
     st.write(prob["question"])
 
+    # ★ その問題に既に答えていれば表示、なければ空
     default = st.session_state.results.get(idx, {}).get("student_answer", "")
 
     answer = st.text_input(
@@ -172,7 +175,7 @@ def student_view():
                 "question": prob["question"],
                 "student_answer": answer,
                 "correct_answer": str(prob["answer"]),
-                "is_correct": check_answer(answer, prob["answer"]),
+                "is_correct": int(check_answer(answer, prob["answer"])),
                 "timestamp": now(),
             }
             if st.session_state.q < len(problems) - 1:
@@ -198,7 +201,7 @@ def student_view():
                 encoding="utf-8",
             )
             st.dataframe(df)
-            st.success(f"正答率：{df['is_correct'].mean()*100:.1f}%")
+            st.success(f"正答率：{df['is_correct'].mean() * 100:.1f}%")
 
 # ==============================
 # 教師画面
@@ -251,7 +254,12 @@ def teacher_view():
         st.warning("成績データがまだありません")
         return
 
-    st.metric("クラス正答率", f"{df['is_correct'].mean()*100:.1f}%")
+    rate = df["is_correct"].mean()
+    if pd.isna(rate):
+        st.metric("クラス正答率", "計算不可")
+    else:
+        st.metric("クラス正答率", f"{rate * 100:.1f}%")
+
     st.bar_chart(df.groupby("question")["is_correct"].mean() * 100)
 
 # ==============================
