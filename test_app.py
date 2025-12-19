@@ -1,5 +1,5 @@
 # ==============================
-# 数学学習アプリ【完全・最終安定版】
+# 数学学習アプリ【完全・最終分析版】
 # Streamlit 1.30+
 # ==============================
 
@@ -56,7 +56,7 @@ def load_results_safe():
         df = pd.read_csv(RESULT_FILE)
         if df.empty:
             return None
-        if not all(col in df.columns for col in REQUIRED_COLUMNS):
+        if not all(c in df.columns for c in REQUIRED_COLUMNS):
             return None
         df["is_correct"] = df["is_correct"].astype(int)
         return df
@@ -195,74 +195,66 @@ def student_view():
             st.success(f"正答率：{df['is_correct'].mean()*100:.1f}%")
 
 # ==============================
-# 教師画面
+# 教師画面（分析 完全版）
 # ==============================
 
 def teacher_view():
     st.header("🧑‍🏫 教師用管理")
 
-    st.subheader("📘 問題編集")
-    problems = load_problems()
-
-    for i, p in enumerate(problems):
-        with st.expander(f"{i+1}. {p['question']}"):
-            q = st.text_input("問題文", p["question"], key=f"q{i}")
-            a = st.text_input("答え", str(p["answer"]), key=f"a{i}")
-
-            if st.button("保存", key=f"s{i}"):
-                try:
-                    ans = json.loads(a) if a.startswith("[") else a
-                except Exception:
-                    ans = a
-                problems[i] = {"question": q, "answer": ans}
-                save_problems(problems)
-                st.success("保存しました")
-                st.rerun()
-
-            if st.button("削除", key=f"d{i}"):
-                problems.pop(i)
-                save_problems(problems)
-                st.rerun()
-
-    st.subheader("➕ 新規問題追加")
-    nq = st.text_input("新しい問題文")
-    na = st.text_input("答え")
-    if st.button("追加"):
-        try:
-            na = json.loads(na) if na.startswith("[") else na
-        except Exception:
-            pass
-        problems.append({"question": nq, "answer": na})
-        save_problems(problems)
-        st.success("追加しました")
-        st.rerun()
-
-    st.divider()
     st.subheader("📊 成績分析")
 
     df = load_results_safe()
     if df is None:
         st.warning("成績データがありません")
-        if st.button("🔄 リセット"):
-            reset_results()
-            st.rerun()
         return
 
-    st.metric("クラス正答率", f"{df['is_correct'].mean()*100:.1f}%")
-    st.bar_chart(df.groupby("question")["is_correct"].mean() * 100)
+    # ---------- 全体 ----------
+    st.markdown("### 👥 クラス全体")
 
-    sid = st.selectbox("生徒ID", sorted(df["student_id"].unique()))
-    sdf = df[df["student_id"] == sid].copy()
+    st.metric("クラス正答率", f"{df['is_correct'].mean()*100:.1f}%")
+
+    q_stats = (
+        df.groupby("question")["is_correct"]
+          .agg(["mean", "count"])
+          .reset_index()
+    )
+    q_stats["正答率(%)"] = q_stats["mean"] * 100
+    q_stats["誤答率(%)"] = 100 - q_stats["正答率(%)"]
+
+    st.dataframe(
+        q_stats[["question", "正答率(%)", "誤答率(%)"]].round(1)
+    )
+
+    st.bar_chart(
+        q_stats.set_index("question")[["正答率(%)", "誤答率(%)"]]
+    )
+
+    st.divider()
+
+    # ---------- 個人 ----------
+    st.markdown("### 👤 個人分析")
+
+    sid = st.selectbox("生徒IDを選択", sorted(df["student_id"].unique()))
+    sdf = df[df["student_id"] == sid]
 
     st.metric("個人正答率", f"{sdf['is_correct'].mean()*100:.1f}%")
 
-    sdf["timestamp"] = pd.to_datetime(sdf["timestamp"])
-    sdf["累積正答率"] = sdf["is_correct"].expanding().mean() * 100
-    st.line_chart(sdf.set_index("timestamp")["累積正答率"])
+    per_q = sdf.groupby("question")["is_correct"].mean().reset_index()
+    per_q["正答率(%)"] = per_q["is_correct"] * 100
 
-    if st.button("⚠ 全成績リセット"):
-        reset_results()
-        st.rerun()
+    st.bar_chart(
+        per_q.set_index("question")["正答率(%)"]
+    )
+
+    st.markdown("#### ❌ 間違えた問題")
+
+    wrong = sdf[sdf["is_correct"] == 0]
+    if wrong.empty:
+        st.success("全問正解です")
+    else:
+        st.dataframe(
+            wrong[["question", "student_answer", "correct_answer"]]
+        )
 
 # ==============================
 # メイン
@@ -298,3 +290,4 @@ else:
         st.session_state.clear()
         st.rerun()
     teacher_view()
+
