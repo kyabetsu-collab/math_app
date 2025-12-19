@@ -62,7 +62,7 @@ def load_results_safe():
             if col not in df.columns:
                 return None
 
-        # ★ 型を必ず数値に
+        # 型を必ず数値に
         df["is_correct"] = pd.to_numeric(df["is_correct"], errors="coerce")
 
         return df
@@ -128,6 +128,16 @@ def check_answer(student, correct):
     return is_equal(student, correct)
 
 # ==============================
+# 成績分析（キャッシュ付き）
+# ==============================
+
+@st.cache_data
+def analyze_results(df):
+    class_rate = df["is_correct"].mean()
+    per_question = df.groupby("question")["is_correct"].mean() * 100
+    return class_rate, per_question
+
+# ==============================
 # 生徒画面
 # ==============================
 
@@ -157,7 +167,6 @@ def student_view():
     st.subheader(f"問題 {st.session_state.q + 1} / {len(problems)}")
     st.write(prob["question"])
 
-    # ★ その問題に既に答えていれば表示、なければ空
     default = st.session_state.results.get(idx, {}).get("student_answer", "")
 
     answer = st.text_input(
@@ -254,13 +263,14 @@ def teacher_view():
         st.warning("成績データがまだありません")
         return
 
-    rate = df["is_correct"].mean()
+    rate, per_q = analyze_results(df)
+
     if pd.isna(rate):
         st.metric("クラス正答率", "計算不可")
     else:
         st.metric("クラス正答率", f"{rate * 100:.1f}%")
 
-    st.bar_chart(df.groupby("question")["is_correct"].mean() * 100)
+    st.bar_chart(per_q)
 
 # ==============================
 # メイン
@@ -296,4 +306,5 @@ else:
         st.session_state.clear()
         st.rerun()
     teacher_view()
+
 
