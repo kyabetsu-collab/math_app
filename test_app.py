@@ -7,6 +7,7 @@ import sympy as sp
 import os
 import unicodedata
 import plotly.express as px
+import time
 from datetime import datetime
 
 # ==============================
@@ -21,7 +22,7 @@ REQUIRED_COLUMNS = [
 ]
 
 # ==============================
-# 2. データ管理・動的ファイル名
+# 2. データ管理・安全な保存ロジック
 # ==============================
 
 def get_problem_file():
@@ -50,12 +51,28 @@ def load_results():
     if not os.path.exists(path):
         return pd.DataFrame(columns=REQUIRED_COLUMNS)
     try:
+        # 読み込み時も他者の書き込みとぶつからないよう配慮
         df = pd.read_csv(path)
         if "is_correct" in df.columns:
             df["is_correct"] = pd.to_numeric(df["is_correct"], errors='coerce').fillna(0)
         return df
     except:
         return pd.DataFrame(columns=REQUIRED_COLUMNS)
+
+def safe_save_results(new_df, path):
+    """一斉アクセス時に書き込み競合を防ぐ安全な保存関数"""
+    max_retries = 5
+    for i in range(max_retries):
+        try:
+            # ファイルが存在しない場合はヘッダー付きで新規作成
+            header = not os.path.exists(path)
+            # mode='a' (追記モード) で開く
+            new_df.to_csv(path, mode='a', index=False, header=header, encoding='utf-8')
+            return True
+        except Exception:
+            # 誰かが書き込み中の場合は0.1~0.3秒待機してリトライ
+            time.sleep(random.uniform(0.1, 0.3))
+    return False
 
 # --- 採点ロジック ---
 def normalize_text(s):
@@ -68,7 +85,6 @@ def is_equal(student, correct):
     s_raw = normalize_text(student)
     c_raw = normalize_text(correct)
     if s_raw == c_raw: return True
-    # 数学的な比較（数学のみ有効、他教科でもエラーにはなりません）
     try:
         if abs(float(s_raw) - float(c_raw)) < 1e-7: return True
     except: pass
@@ -106,10 +122,9 @@ def student_view():
         st.session_state.done = False
 
     if st.session_state.done:
-        st.success(f"{subject}のテストを完了しました！")
-        if st.button("もう一度受ける"):
-            for key in ["q_idx", "order", "answers_dict", "done"]:
-                if key in st.session_state: del st.session_state[key]
+        st.success(f"お疲れ様でした！{subject}の解答を送信しました。")
+        if st.button("メニューに戻る"):
+            st.session_state.mode = None
             st.rerun()
         return
 
@@ -145,8 +160,11 @@ def student_view():
                         "is_correct": is_correct, "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M")
                     })
                 res_df = pd.DataFrame(results_to_save)
-                res_df.to_csv(get_result_file(), mode="a", header=not os.path.exists(get_result_file()), index=False)
-                st.session_state.done = True
+                # 安全な保存関数の呼び出し
+                if safe_save_results(res_df, get_result_file()):
+                    st.session_state.done = True
+                else:
+                    st.error("送信に失敗しました。もう一度「終了」を押してください。")
                 st.rerun()
             else:
                 st.session_state.q_idx += 1
@@ -166,12 +184,15 @@ def teacher_view():
     with tab1:
         if df.empty:
             st.info(f"{subject}の解答データがありません。")
+            if st.button("最新の状態に更新"): st.rerun()
         else:
             acc = df["is_correct"].mean() * 100
             c1, c2, c3 = st.columns(3)
             c1.metric("平均正答率", f"{acc:.1f}%")
             c2.metric("総解答数", len(df))
             c3.metric("受験人数", df["student_id"].nunique())
+            
+            if st.button("🔄 データを最新に更新"): st.rerun()
 
             st.subheader("成績分布")
             s_stats = df.groupby("student_id")["is_correct"].mean() * 100
@@ -193,10 +214,11 @@ def teacher_view():
             with st.expander(f"問{i+1}: {p['question'][:30]}..."):
                 problems[i]["question"] = st.text_area("問題", p["question"], key=f"eq_{i}")
                 problems[i]["answer"] = st.text_input("正解", p["answer"], key=f"ea_{i}")
-                if st.button("更新", key=f"sv_{i}"):
+                col_save, col_del = st.columns(2)
+                if col_save.button("更新", key=f"sv_{i}"):
                     save_problems(problems)
                     st.success("保存完了")
-                if st.button("削除", key=f"dl_{i}"):
+                if col_del.button("削除", key=f"dl_{i}"):
                     problems.pop(i)
                     save_problems(problems)
                     st.rerun()
@@ -205,6 +227,7 @@ def teacher_view():
         st.subheader("データ管理")
         if st.button(f"🗑️ {subject}の全成績をリセット"):
             if os.path.exists(get_result_file()): os.remove(get_result_file())
+            st.success("データを削除しました。")
             st.rerun()
 
 # ==============================
@@ -222,7 +245,7 @@ with st.sidebar:
         st.session_state.mode = None
         st.rerun()
     st.divider()
-    st.subheader(f"現在：{st.session_state.selected_subject}")
+    st.subheader(f"教科：{st.session_state.selected_subject}")
     if st.button("✏️ 生徒用テスト"):
         st.session_state.mode = "student"
         st.rerun()
@@ -232,18 +255,18 @@ with st.sidebar:
 
 if st.session_state.mode is None:
     st.title("📚 総合学習データ分析アプリ")
-    st.write("学習したい教科を選択してください。")
+    st.write("学習したい教科を選択してください。一斉解答にも対応しています。")
     
     cols = st.columns(len(SUBJECTS))
     for i, sub in enumerate(SUBJECTS):
         with cols[i]:
             if st.button(sub, use_container_width=True):
                 st.session_state.selected_subject = sub
-                st.success(f"**{sub}** を選択しました！")
+                st.success(f"{sub} 選択中")
     
     st.divider()
-    st.markdown(f"### 現在の選択: **{st.session_state.selected_subject}**")
-    st.info("サイドバーから「テスト開始」または「教師画面」へ進んでください。")
+    st.markdown(f"### 現在の教科: **{st.session_state.selected_subject}**")
+    st.info("サイドバーから「生徒用テスト」または「教師用画面」を選択してください。")
 
 elif st.session_state.mode == "student":
     student_view()
