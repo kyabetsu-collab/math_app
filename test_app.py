@@ -6,7 +6,6 @@ import numpy as np
 import sympy as sp
 import os
 import unicodedata
-import plotly.express as px
 import time
 from datetime import datetime
 import glob
@@ -19,7 +18,7 @@ TEACHER_PASSWORD = "admin"
 
 REQUIRED_COLUMNS = [
     "student_id", "question", "student_answer", 
-    "correct_answer", "is_correct", "timestamp"
+    "correct_answer", "is_correct", "timestamp", "type"
 ]
 
 # ==============================
@@ -52,7 +51,7 @@ def load_results():
     if not os.path.exists(path):
         return pd.DataFrame(columns=REQUIRED_COLUMNS)
     try:
-        # 読み込み時は utf-8 または utf-8-sig 両方に対応
+        # Excel対応のためBOM付きUTF-8で読み込み
         df = pd.read_csv(path, encoding='utf-8-sig')
         if "is_correct" in df.columns:
             df["is_correct"] = pd.to_numeric(df["is_correct"], errors='coerce').fillna(0)
@@ -61,12 +60,11 @@ def load_results():
         return pd.DataFrame(columns=REQUIRED_COLUMNS)
 
 def safe_save_results(new_df, path):
-    """Excel対応のため encoding='utf-8-sig' で保存"""
+    """Excel対応(utf-8-sig)で保存"""
     max_retries = 5
     for i in range(max_retries):
         try:
             header = not os.path.exists(path)
-            # ★修正ポイント: utf-8-sig を指定してExcelの文字化けを防ぐ
             new_df.to_csv(path, mode='a', index=False, header=header, encoding='utf-8-sig')
             return True
         except Exception:
@@ -115,75 +113,45 @@ def student_view():
 
     if "q_idx" not in st.session_state:
         st.session_state.q_idx = 0
-        st.session_state.order = list(range(len(problems)))
-        random.shuffle(st.session_state.order)
         st.session_state.answers_dict = {}
         st.session_state.done = False
 
     if st.session_state.done:
         st.success("解答を送信しました！")
-        st.subheader("📝 あなたの採点結果")
-        
-        personal_res = []
-        correct_count = 0
-        for i in range(len(problems)):
-            s_ans = st.session_state.answers_dict.get(i, "")
-            correct_ans = problems[i]["answer"]
-            judgment = "⭕" if is_equal(s_ans, correct_ans) else "❌"
-            if judgment == "⭕": correct_count += 1
-            personal_res.append({
-                "問題": problems[i]["question"],
-                "あなたの解答": s_ans,
-                "正解": correct_ans,
-                "結果": judgment
-            })
-        
-        score = int((correct_count / len(problems)) * 100)
-        st.metric("スコア", f"{score}%", f"{correct_count} / {len(problems)} 問正解")
-        st.table(pd.DataFrame(personal_res))
-        
         if st.button("メニューに戻る"):
-            for key in ["q_idx", "order", "answers_dict", "done"]:
+            for key in ["q_idx", "answers_dict", "done"]:
                 if key in st.session_state: del st.session_state[key]
             st.session_state.mode = None
             st.rerun()
         return
 
-    idx = st.session_state.order[st.session_state.q_idx]
-    prob = problems[idx]
+    prob = problems[st.session_state.q_idx]
     st.subheader(f"問題 {st.session_state.q_idx + 1} / {len(problems)}")
     st.info(prob["question"])
     
-    saved_val = st.session_state.answers_dict.get(idx, "")
-    ans = st.text_input("答えを入力", value=saved_val, key=f"q_{st.session_state.q_idx}")
+    # --- 出題形式の分岐 ---
+    q_type = prob.get("type", "記述式")
+    if q_type == "選択式":
+        ans = st.radio("正しいものを選択してください", prob.get("options", []), key=f"q_{st.session_state.q_idx}")
+    else:
+        ans = st.text_input("答えを入力してください", key=f"q_{st.session_state.q_idx}")
 
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.session_state.q_idx > 0:
-            if st.button("← 前へ"):
-                st.session_state.answers_dict[idx] = ans
-                st.session_state.q_idx -= 1
-                st.rerun()
-    with col2:
-        is_last = (st.session_state.q_idx == len(problems) - 1)
-        if st.button("採点・終了" if is_last else "次へ ➔"):
-            st.session_state.answers_dict[idx] = ans
-            if is_last:
-                results = []
-                for p_idx, p_data in enumerate(problems):
-                    s_ans = st.session_state.answers_dict.get(p_idx, "")
-                    is_c = 1 if is_equal(s_ans, p_data["answer"]) else 0
-                    results.append({
-                        "student_id": sid, "question": p_data["question"],
-                        "student_answer": s_ans, "correct_answer": p_data["answer"],
-                        "is_correct": is_c, "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M")
-                    })
-                if safe_save_results(pd.DataFrame(results), get_result_file()):
-                    st.session_state.done = True
-                st.rerun()
-            else:
-                st.session_state.q_idx += 1
-                st.rerun()
+    if st.button("次の問題へ" if st.session_state.q_idx < len(problems)-1 else "採点して終了"):
+        is_c = 1 if is_equal(ans, prob["answer"]) else 0
+        res_df = pd.DataFrame([{
+            "student_id": sid, "question": prob["question"],
+            "student_answer": ans, "correct_answer": prob["answer"],
+            "is_correct": is_c, "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
+            "type": q_type
+        }])
+        safe_save_results(res_df, get_result_file())
+        
+        if st.session_state.q_idx < len(problems) - 1:
+            st.session_state.q_idx += 1
+            st.rerun()
+        else:
+            st.session_state.done = True
+            st.rerun()
 
 # ==============================
 # 4. 教師用画面
@@ -192,111 +160,114 @@ def student_view():
 def teacher_view():
     subject = st.session_state.selected_subject
     st.header(f"🧑‍🏫 教師用管理（{subject}）")
-    tab1, tab2, tab3 = st.tabs(["📊 成績分析・個人詳細", "📝 問題編集", "⚙️ データ管理"])
-
-    df = load_results()
+    tab1, tab2, tab3 = st.tabs(["📊 成績分析", "📝 問題編集", "⚙️ データ管理"])
 
     with tab1:
-        if df.empty:
-            st.info("解答データがありません。")
-        else:
-            acc = df["is_correct"].mean() * 100
-            c1, c2, c3 = st.columns(3)
-            c1.metric("全体平均正答率", f"{acc:.1f}%")
-            c2.metric("総解答データ数", len(df))
-            c3.metric("受験人数", df["student_id"].nunique())
-            
+        df = load_results()
+        if not df.empty:
+            st.dataframe(df, use_container_width=True)
+            # 簡易集計
             st.divider()
-            st.subheader("👤 生徒別成績一覧")
-            student_stats = df.groupby("student_id").agg(
-                正解数=("is_correct", "sum"),
-                問題数=("is_correct", "count")
-            ).reset_index()
-            student_stats["正答率(%)"] = (student_stats["正解数"] / student_stats["問題数"] * 100).round(1)
-            st.dataframe(student_stats.sort_values("正答率(%)", ascending=False), use_container_width=True)
-
-            st.subheader("🔍 個別解答ログ")
-            target = st.selectbox("詳細を見たい生徒を選択", ["--選択してください--"] + list(student_stats["student_id"].unique()))
-            if target != "--選択してください--":
-                st.table(df[df["student_id"] == target][["question", "student_answer", "correct_answer", "is_correct", "timestamp"]])
+            st.subheader("👤 生徒別正答率")
+            stats = df.groupby("student_id")["is_correct"].mean() * 100
+            st.bar_chart(stats)
+        else:
+            st.info("解答データがありません。")
 
     with tab2:
         problems = load_problems()
-        with st.expander("➕ 新規問題を追加"):
-            nq = st.text_area("問題文")
-            na = st.text_input("正解")
-            if st.button("登録"):
-                problems.append({"question": nq, "answer": na})
-                save_problems(problems)
-                st.rerun()
+        st.subheader("➕ 新規問題作成")
         
+        q_type = st.selectbox("形式を選択", ["記述式", "選択式"])
+        nq = st.text_area("問題文を入力")
+        
+        options = []
+        if q_type == "選択式":
+            st.write("選択肢を入力してください")
+            o1 = st.text_input("選択肢A")
+            o2 = st.text_input("選択肢B")
+            o3 = st.text_input("選択肢C")
+            o4 = st.text_input("選択肢D")
+            options = [o1, o2, o3, o4]
+            na = st.selectbox("正解となる選択肢", options)
+        else:
+            na = st.text_input("正解の文字列")
+
+        if st.button("問題を登録"):
+            if nq and na:
+                new_p = {"type": q_type, "question": nq, "answer": na}
+                if q_type == "選択式": new_p["options"] = options
+                problems.append(new_p)
+                save_problems(problems)
+                st.success("登録完了")
+                st.rerun()
+
+        st.divider()
+        st.subheader("登録済みの問題一覧")
         for i, p in enumerate(problems):
-            with st.expander(f"問{i+1}: {p['question'][:30]}..."):
-                problems[i]["question"] = st.text_area("問題", p["question"], key=f"eq_{i}")
-                problems[i]["answer"] = st.text_input("正解", p["answer"], key=f"ea_{i}")
-                col_u, col_d = st.columns(2)
-                if col_u.button("更新", key=f"u_{i}"):
-                    save_problems(problems)
-                    st.success("更新しました")
-                if col_d.button("削除", key=f"d_{i}"):
+            with st.expander(f"問{i+1}: {p['question'][:20]}... ({p.get('type', '記述')})"):
+                st.write(f"正解: {p['answer']}")
+                if st.button("この問題を削除", key=f"dq_{i}"):
                     problems.pop(i)
                     save_problems(problems)
                     st.rerun()
 
     with tab3:
-        st.subheader("📦 成績データのアーカイブと削除")
-        col_arch, col_del = st.columns(2)
+        st.subheader("📦 成績データの整理")
         
-        with col_arch:
-            st.write("### アーカイブ（保存してリセット）")
-            if st.button("📁 過去ログとして保存する"):
-                path = get_result_file()
-                if os.path.exists(path):
-                    ts = datetime.now().strftime("%Y%m%d_%H%M")
-                    new_path = path.replace(".csv", f"_{ts}.csv")
-                    os.rename(path, new_path)
-                    st.success(f"保存完了: {new_path}")
-                    time.sleep(1)
-                    st.rerun()
-                else: st.warning("データがありません")
-
-        with col_del:
-            st.write("### 完全削除")
-            if st.button("🗑️ 完全に消去する"):
-                path = get_result_file()
-                if os.path.exists(path):
-                    os.remove(path)
-                    st.success("削除しました")
-                    time.sleep(1)
-                    st.rerun()
+        if st.button("📁 現在の成績をアーカイブ（保存）する"):
+            path = get_result_file()
+            if os.path.exists(path):
+                ts = datetime.now().strftime("%Y%m%d_%H%M")
+                new_path = path.replace(".csv", f"_{ts}.csv")
+                os.rename(path, new_path)
+                st.success(f"アーカイブ完了: {new_path}")
+                st.rerun()
 
         st.divider()
-        st.subheader("📁 アーカイブ済みファイルの確認")
-        archive_files = glob.glob(f"{subject}_results_*.csv")
-        if not archive_files:
-            st.info("アーカイブされた過去のデータはありません。")
-        else:
-            selected_file = st.selectbox("過去のファイルを選択", archive_files)
-            # 読み込み時も一貫して utf-8-sig
-            temp_df = pd.read_csv(selected_file, encoding='utf-8-sig')
-            st.write(f"ファイル名: {selected_file}")
+        st.subheader("📁 アーカイブ済みファイル（個別削除・DL）")
+        
+        # 過去ファイルをリストアップ
+        archive_files = sorted(glob.glob(f"{subject}_results_*.csv"), reverse=True)
+        
+        if archive_files:
+            selected_file = st.selectbox("操作するファイルを選択", archive_files)
             
-            # ★修正ポイント: ダウンロード時も utf-8-sig を付与
-            csv_data = temp_df.to_csv(index=False, encoding='utf-8-sig')
-            st.download_button(
-                label="📥 このCSVをExcel用にダウンロード", 
-                data=csv_data, 
-                file_name=selected_file, 
-                mime="text/csv"
-            )
-            
-            if st.checkbox("中身をプレビュー"):
+            try:
+                # プレビュー時も文字化け防止
+                temp_df = pd.read_csv(selected_file, encoding='utf-8-sig')
+                
+                c1, c2 = st.columns(2)
+                with c1:
+                    # Excelで開けるようにDL
+                    csv_data = temp_df.to_csv(index=False, encoding='utf-8-sig')
+                    st.download_button(
+                        label="📥 Excel用CSVをダウンロード",
+                        data=csv_data,
+                        file_name=selected_file,
+                        mime="text/csv"
+                    )
+                with c2:
+                    # ★ご要望の個別削除機能
+                    if st.button("🗑️ このファイルを完全に削除"):
+                        os.remove(selected_file)
+                        st.error(f"削除しました: {selected_file}")
+                        time.sleep(0.5)
+                        st.rerun()
+                
+                st.write("プレビュー:")
                 st.dataframe(temp_df)
+            except:
+                st.warning("形式が古いか破損しています。下のボタンで削除してください。")
+                if st.button("🗑️ この破損ファイルを削除"):
+                    os.remove(selected_file)
+                    st.rerun()
+        else:
+            st.info("過去のアーカイブはありません。")
 
 # ==============================
-# 5. メインロジック
+# 5. メイン
 # ==============================
-
 st.set_page_config(page_title="総合学習分析アプリ", layout="wide")
 
 if "mode" not in st.session_state: st.session_state.mode = None
@@ -318,25 +289,21 @@ with st.sidebar:
 
 if st.session_state.mode is None:
     st.title("📚 総合学習分析アプリ")
-    st.write("教科を選んでください。アーカイブしたCSVはExcelでそのまま開けます。")
     cols = st.columns(len(SUBJECTS))
     for i, sub in enumerate(SUBJECTS):
         with cols[i]:
             if st.button(sub, use_container_width=True):
                 st.session_state.selected_subject = sub
-                st.success(f"{sub} 選択中")
-    st.info("サイドバーから「テスト」または「教師画面」へ進んでください。")
+                st.success(f"{sub} を選択中")
 
 elif st.session_state.mode == "student":
     student_view()
 
 elif st.session_state.mode == "auth":
-    st.title("ログイン")
     pw = st.text_input("パスワード", type="password")
     if st.button("ログイン"):
         if pw == TEACHER_PASSWORD:
-            st.session_state.mode = "teacher"
-            st.rerun()
+            st.session_state.mode = "teacher"; st.rerun()
         else: st.error("不一致")
 
 elif st.session_state.mode == "teacher":
